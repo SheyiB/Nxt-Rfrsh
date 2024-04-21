@@ -7,6 +7,8 @@ import { redirect } from 'next/navigation';
 import { signIn } from '@/auth';
 import { AuthError } from 'next-auth';
 
+import bcrypt from 'bcrypt';
+
 export async function authenticate(
     prevState: string | undefined,
     formData: FormData,
@@ -40,9 +42,18 @@ const FormSchema = z.object({
     date: z.string(),
 });
 
+const UserSchema = z.object({
+    id: z.string(),
+    fullname: z.string().min(4, { message: 'Full name must be at least 4 characters long.' }),
+    email: z.string().email({ message: 'Please enter a valid email address.' }),
+    password: z.string().min(4, { message: 'Password must be at least 4 characters long.' }),
+});
 const CreateInvoice = FormSchema.omit({ id: true, date: true });
 
 const UpdateInvoice = FormSchema.omit({ id: true, date: true });
+
+
+const CreateUser = UserSchema.omit({ id: true });
 
 
 export type State = {
@@ -50,6 +61,16 @@ export type State = {
         customerId?: string[];
         amount?: string[];
         status?: string[];
+    };
+    message?: string | null;
+};
+
+
+export type UserState = {
+    errors?: {
+        fullname?: string[];
+        email?: string[];
+        password?: string[];
     };
     message?: string | null;
 };
@@ -128,4 +149,55 @@ export async function deleteInvoice(id: string) {
         return { message: 'Database Error: Failed to Delete Invoice.' };
     }
 
+}
+
+export async function createUser(prevState: UserState, formData: FormData) {
+
+    const validatedFields = CreateUser.safeParse({
+        fullname: formData.get('fullname'),
+        email: formData.get('email'),
+        password: formData.get('password'),
+    });
+
+    console.log(validatedFields);
+
+    if (!validatedFields.success) {
+        return {
+            errors: validatedFields.error.flatten().fieldErrors,
+            message: 'Missing Fields. Failed to Create User.',
+        };
+    }
+
+    const { fullname, email, password } = validatedFields.data;
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    try {
+
+        await sql`
+          INSERT INTO users (name, email, password)
+          VALUES (${fullname}, ${email}, ${hashedPassword})
+          ON CONFLICT (id) DO NOTHING
+        `;
+
+    } catch (error) {
+
+        return {
+            message: 'Database Error: Failed to Create User.',
+        };
+    }
+
+    revalidatePath('/admin');
+    redirect('/admin');
+}
+
+
+export async function deleteUser(id: string) {
+    try {
+        await sql`DELETE FROM users WHERE id = ${id}`;
+        revalidatePath('/dashboard/admin');
+        return { message: 'Deleted User.' };
+    } catch (error) {
+        return { message: 'Database Error: Failed to Delete User.' };
+    }
 }
